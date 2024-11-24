@@ -1,3 +1,4 @@
+import os
 import torch
 from enum import Enum
 import logging
@@ -130,6 +131,17 @@ class CLIP:
             self.cond_stage_model.set_clip_options({"projected_pooled": False})
 
         self.load_model()
+        # if use aigpu, compile the model using tvm
+        if "aigpu" in os.getenv("infer_devices", ""):
+            """
+            1. wrap model(rewrite forward function) to use torch.jit.trace
+            2. get the input shape dict
+            """
+            class ModelWrapper(torch.nn.Module):
+                def __init__(self, model):
+                    self.model = model
+            
+            # wrapped_model = ModelWrapper(self.cond_stage_model)
         o = self.cond_stage_model.encode_token_weights(tokens)
         cond, pooled = o[:2]
         if return_dict:

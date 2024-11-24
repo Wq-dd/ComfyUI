@@ -1,3 +1,4 @@
+import os
 from abc import abstractmethod
 
 import torch as th
@@ -840,6 +841,11 @@ class UNetModel(nn.Module):
         ), "must specify y if and only if the model is class-conditional"
         hs = []
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False).to(x.dtype)
+        # if "aigpu" in os.getenv("infer_devices", ""):
+        #     if not hasattr(self, "if_traced_unet"):
+        #         traced_time_embed = th.jit.trace(self.time_embed, t_emb, strict=False)
+        #         setattr(self, "if_traced_unet", True)
+        # else:
         emb = self.time_embed(t_emb)
 
         if "emb_patch" in transformer_patches:

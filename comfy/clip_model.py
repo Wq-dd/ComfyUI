@@ -1,3 +1,4 @@
+import os
 import torch
 from comfy.ldm.modules.attention import optimized_attention_for_device
 import comfy.ops
@@ -70,6 +71,8 @@ class CLIPEncoder(torch.nn.Module):
             x = l(x, mask, optimized_attention)
             if i == intermediate_output:
                 intermediate = x.clone()
+        if intermediate is None:
+            return x, torch.empty(0)
         return x, intermediate
 
 class CLIPEmbeddings(torch.nn.Module):
@@ -98,7 +101,20 @@ class CLIPTextModel_(torch.nn.Module):
         self.final_layer_norm = operations.LayerNorm(embed_dim, dtype=dtype, device=device)
 
     def forward(self, input_tokens, attention_mask=None, intermediate_output=None, final_layer_norm_intermediate=True, dtype=torch.float32):
-        x = self.embeddings(input_tokens, dtype=dtype)
+        if "aigpu" in os.getenv("infer_devices", ""):
+            if not hasattr(self, "if_clip_traced"):
+                traced_embeddings = torch.jit.trace(self.embeddings, input_tokens, strict=False)
+                t_x = torch.rand(1, 77, 768)
+                t_mask = torch.empty(t_x.shape[1], t_x.shape[1], dtype=t_x.dtype, device=t_x.device).fill_(float("-inf")).triu_(1)
+                traced_encoder = torch.jit.trace(self.encoder, (t_x, t_mask), strict=False)
+                traced_final_layer_norm = torch.jit.trace(self.final_layer_norm, t_x, strict=False)
+                setattr(self, "if_clip_traced", True)
+                setattr(self, "traced_embeddings", traced_embeddings)
+                setattr(self, "traced_encoder", traced_encoder)
+                setattr(self, "traced_final_layer_norm", traced_final_layer_norm)
+            x = self.traced_embeddings(input_tokens)
+        else:
+            x = self.embeddings(input_tokens, dtype=dtype)
         mask = None
         if attention_mask is not None:
             mask = 1.0 - attention_mask.to(x.dtype).reshape((attention_mask.shape[0], 1, -1, attention_mask.shape[-1])).expand(attention_mask.shape[0], 1, attention_mask.shape[-1], attention_mask.shape[-1])
@@ -110,8 +126,14 @@ class CLIPTextModel_(torch.nn.Module):
         else:
             mask = causal_mask
 
-        x, i = self.encoder(x, mask=mask, intermediate_output=intermediate_output)
-        x = self.final_layer_norm(x)
+        if "aigpu" in os.getenv("infer_devices", ""):
+            x, i = self.traced_encoder(x, mask)
+            x = self.traced_final_layer_norm(x)
+        else:
+            x, i = self.encoder(x, mask=mask, intermediate_output=intermediate_output)
+            x = self.final_layer_norm(x)
+        if i.numel() == 0:
+            i = None
         if i is not None and final_layer_norm_intermediate:
             i = self.final_layer_norm(i)
 

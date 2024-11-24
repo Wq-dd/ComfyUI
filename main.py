@@ -8,6 +8,7 @@ import time
 from comfy.cli_args import args
 from app.logger import setup_logger
 
+import torch
 
 setup_logger(log_level=args.verbose)
 
@@ -67,6 +68,9 @@ import utils.extra_config
 
 if os.name == "nt":
     logging.getLogger("xformers").addFilter(lambda record: 'A matching Triton is not available' not in record.getMessage())
+
+if __name__ == "__main__":
+    os.environ["infer_devices"] = "aigpu,cpu"
 
 if __name__ == "__main__":
     if args.cuda_device is not None:

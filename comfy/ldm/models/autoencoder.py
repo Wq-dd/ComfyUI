@@ -1,3 +1,4 @@
+import os
 import torch
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -196,8 +197,18 @@ class AutoencodingEngineLegacy(AutoencodingEngine):
 
     def decode(self, z: torch.Tensor, **decoder_kwargs) -> torch.Tensor:
         if self.max_batch_size is None:
-            dec = self.post_quant_conv(z)
-            dec = self.decoder(dec, **decoder_kwargs)
+            if "aigpu" in os.getenv("infer_devices", ""):
+                if not hasattr(self, "if_traced_vae_decoder"):
+                    traced_post_quant_conv = torch.jit.trace(self.post_quant_conv, z, strict=False)
+                    traced_dec = torch.jit.trace(self.decoder, z, strict=False)
+                    setattr(self, "if_traced_vae_decoder", True)
+                    setattr(self, "traced_post_quant_conv", traced_post_quant_conv)
+                    setattr(self, "traced_dec", traced_dec)
+                dec = self.traced_post_quant_conv(z)
+                dec = self.traced_dec(dec)
+            else:
+                dec = self.post_quant_conv(z)
+                dec = self.decoder(dec, **decoder_kwargs)
         else:
             N = z.shape[0]
             bs = self.max_batch_size
